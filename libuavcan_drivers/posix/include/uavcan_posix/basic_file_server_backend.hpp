@@ -1,6 +1,6 @@
 /****************************************************************************
 *
-*   Copyright (c) 2015 PX4 Development Team. All rights reserved.
+*   Copyright (c) 2015, 2021 PX4 Development Team. All rights reserved.
 *      Author: Pavel Kirienko <pavel.kirienko@gmail.com>
 *              David Sidrane <david_s5@usa.net>
 *
@@ -37,6 +37,7 @@ class BasicFileServerBackend : public uavcan::IFileServerBackend
     enum { FilePermissions = 438 };   ///< 0o666
 
 protected:
+
     class FDCacheBase
     {
     public:
@@ -337,37 +338,51 @@ protected:
      * Implementation of this method is required.
      * On success the method must return zero.
      */
-    virtual uavcan::int16_t getInfo(const Path& path, uavcan::uint64_t& out_size, EntryType& out_type)
+    virtual uavcan::int16_t getInfo(const Path& _path, uavcan::uint64_t& out_size, EntryType& out_type)
     {
         int rv = uavcan::protocol::file::Error::INVALID_VALUE;
 
-        if (path.size() > 0)
+        if (_path.size() > 0)
         {
-            using namespace std;
 
-            struct stat sb;
+          // For non-complaint request Add the root path'
 
-            rv = stat(path.c_str(), &sb);
+          const char *root_path = getRootPath().c_str();
+          Path path = _path;
+          if (UAVCAN_NULLPTR == strstr(path.c_str(), root_path))
+          {
+              path = root_path;
+              path += _path;
+          }
 
-            if (rv < 0)
-            {
-                rv = errno;
-            }
-            else
-            {
-                rv = 0;
-                out_size = sb.st_size;
-                out_type.flags = uavcan::protocol::file::EntryType::FLAG_READABLE;
-                if (S_ISDIR(sb.st_mode))
-                {
-                    out_type.flags |= uavcan::protocol::file::EntryType::FLAG_DIRECTORY;
-                }
-                else if (S_ISREG(sb.st_mode))
-                {
-                    out_type.flags |= uavcan::protocol::file::EntryType::FLAG_FILE;
-                }
-                // TODO Using fixed flag FLAG_READABLE until we add file permission checks to return actual value.
-            }
+          if (path.size() > 0)
+          {
+              using namespace std;
+
+              struct stat sb;
+
+              rv = stat(path.c_str(), &sb);
+
+              if (rv < 0)
+              {
+                  rv = errno;
+              }
+              else
+              {
+                  rv = 0;
+                  out_size = sb.st_size;
+                  out_type.flags = uavcan::protocol::file::EntryType::FLAG_READABLE;
+                  if (S_ISDIR(sb.st_mode))
+                  {
+                      out_type.flags |= uavcan::protocol::file::EntryType::FLAG_DIRECTORY;
+                  }
+                  else if (S_ISREG(sb.st_mode))
+                  {
+                      out_type.flags |= uavcan::protocol::file::EntryType::FLAG_FILE;
+                  }
+                  // TODO Using fixed flag FLAG_READABLE until we add file permission checks to return actual value.
+              }
+          }
         }
         return rv;
     }
@@ -379,58 +394,71 @@ protected:
      * if the end of file is reached.
      * On success the method must return zero.
      */
-    virtual uavcan::int16_t read(const Path& path, const uavcan::uint64_t offset, uavcan::uint8_t* out_buffer,
+    virtual uavcan::int16_t read(const Path& _path, const uavcan::uint64_t offset, uavcan::uint8_t* out_buffer,
                                  uavcan::uint16_t& inout_size)
     {
         int rv = uavcan::protocol::file::Error::INVALID_VALUE;
 
-        if (path.size() > 0 && inout_size != 0)
+        if (_path.size() > 0 && inout_size != 0)
         {
-            using namespace std;
 
-            FDCacheBase& cache = getFDCache();
-            int fd = cache.open(path.c_str(), O_RDONLY);
+          // For non-complaint request Add the root path'
 
-            if (fd < 0)
-            {
-                rv = errno;
-            }
-            else
-            {
-                ssize_t total_read = 0;
+          const char *root_path = getRootPath().c_str();
+          Path path = _path;
+          if (UAVCAN_NULLPTR == strstr(path.c_str(), root_path)) {
+              path = root_path;
+              path += _path;
+          }
 
-                rv = ::lseek(fd, offset, SEEK_SET);
+          if (path.size() > 0 && inout_size != 0)
+          {
+              using namespace std;
 
-                if (rv < 0)
-                {
-                    rv = errno;
-                }
-                else
-                {
-                    rv = 0;
-                    ssize_t remaining = inout_size;
-                    ssize_t nread = 0;
-                    do
-                    {
-                        nread = ::read(fd, &out_buffer[total_read], remaining);
-                        if (nread < 0)
-                        {
-                            rv = errno;
-                        }
-                        else
-                        {
-                            remaining -= nread,
-                            total_read += nread;
-                        }
-                    }
-                    while (nread > 0 && remaining > 0);
-                }
+              FDCacheBase& cache = getFDCache();
+              int fd = cache.open(path.c_str(), O_RDONLY);
 
-                (void)cache.close(fd, rv != 0 || total_read != inout_size);
-                inout_size = total_read;
-            }
+              if (fd < 0)
+              {
+                  rv = errno;
+              }
+              else
+              {
+                  ssize_t total_read = 0;
+
+                  rv = ::lseek(fd, offset, SEEK_SET);
+
+                  if (rv < 0)
+                  {
+                      rv = errno;
+                  }
+                  else
+                  {
+                      rv = 0;
+                      ssize_t remaining = inout_size;
+                      ssize_t nread = 0;
+                      do
+                      {
+                          nread = ::read(fd, &out_buffer[total_read], remaining);
+                          if (nread < 0)
+                          {
+                              rv = errno;
+                          }
+                          else
+                          {
+                              remaining -= nread,
+                              total_read += nread;
+                          }
+                      }
+                      while (nread > 0 && remaining > 0);
+                  }
+
+                  (void)cache.close(fd, rv != 0 || total_read != inout_size);
+                  inout_size = total_read;
+              }
+          }
         }
-        return rv;
+          return rv;
     }
 
 public:

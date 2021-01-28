@@ -342,15 +342,22 @@ class FirmwareUpdateTrigger : public INodeInfoListener,
             return;
         }
 
+        // Non Compliment Nodes can not handle a long path and are internally
+        //  marked with a @. The @  will not be sent to the node.
+
+        bool compliant = path->c_str()[0] != '@';
+
         protocol::file::BeginFirmwareUpdate::Request req;
 
         req.source_node_id = getNode().getNodeID().get();
-        if (!common_path_prefix_.empty())
+        if (!common_path_prefix_.empty() && compliant)
         {
             req.image_file_remote_path.path += common_path_prefix_.c_str();
             req.image_file_remote_path.path.push_back(protocol::file::Path::SEPARATOR);
         }
-        req.image_file_remote_path.path += path->c_str();
+
+        // Remove the @ if need be
+        req.image_file_remote_path.path += &path->c_str()[compliant ? 0 : 1];
 
         UAVCAN_TRACE("FirmwareUpdateTrigger", "Request to %d with path: %s",
                      int(node_id.get()), req.image_file_remote_path.path.c_str());

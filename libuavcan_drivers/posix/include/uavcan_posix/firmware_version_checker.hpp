@@ -23,6 +23,8 @@
 # define DIRENT_ISFILE(dtype)  ((dtype) == DT_REG)
 #endif
 
+#define ALT_APD_SIGNATURE 0x40, 0xa2, 0xe4, 0xf1, 0x64, 0x68, 0x91, 0x06
+
 namespace uavcan_posix
 {
 /**
@@ -161,12 +163,17 @@ class FirmwareVersionChecker : public uavcan::IFirmwareVersionChecker
     struct AppDescriptor
     {
         uavcan::uint8_t signature[sizeof(uavcan::uint64_t)];
-        uavcan::uint64_t image_crc;
+        union{
+            uavcan::uint64_t image_crc;
+            uavcan::uint32_t crc32_block1;
+            uavcan::uint32_t crc32_block2;
+        };
         uavcan::uint32_t image_size;
         uavcan::uint32_t vcs_commit;
-        uavcan::uint8_t major_version;
-        uavcan::uint8_t minor_version;
-        uavcan::uint8_t reserved[6];
+        uavcan::uint8_t  major_version;
+        uavcan::uint8_t  minor_version;
+        uavcan::uint16_t board_id;
+        uavcan::uint8_t  reserved[ 3 + 3 + 2];
     };
 
     static int getFileInfo(const char* path, AppDescriptor& descriptor)
@@ -175,8 +182,11 @@ class FirmwareVersionChecker : public uavcan::IFirmwareVersionChecker
 
         const unsigned MaxChunk = 512 / sizeof(uint64_t);
 
-        uint64_t signature = 0;
-        std::memcpy(&signature, "APDesc00", 8);
+        union {
+            uavcan::uint64_t l;
+            uavcan::uint8_t  b[sizeof(uint64_t)]{ALT_APD_SIGNATURE};
+        } signature;
+
 
         int rv = -ENOENT;
         uint64_t chunk[MaxChunk];
@@ -205,7 +215,7 @@ class FirmwareVersionChecker : public uavcan::IFirmwareVersionChecker
 
                 do
                 {
-                    if (*p == signature)
+                    if (*p == signature.l)
                     {
                         pdescriptor = reinterpret_cast<AppDescriptor*>(p); // FIXME TODO This breaks strict aliasing
                         descriptor = *pdescriptor;
@@ -267,6 +277,7 @@ protected:
                          node_info.hardware_version.major,
                          node_info.hardware_version.minor);
 
+        bool isNonCompliant = UAVCAN_NULLPTR != strstr(node_info.name.c_str(),"org.ardupilot");
         if (n > 0 && n < (int)sizeof(fname_root) - 2)
         {
             DIR* const fwdir = opendir(fname_root);
@@ -308,7 +319,8 @@ protected:
                                     descriptor.image_crc != node_info.software_version.image_crc)
                                 {
                                     rv = true;
-                                    out_firmware_file_path = pfile->d_name;
+                                    out_firmware_file_path = (!isNonCompliant) ? "" : "@";
+                                    out_firmware_file_path += pfile->d_name;
                                 }
                                 break;
                             }
